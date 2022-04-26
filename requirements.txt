@@ -1,4 +1,4 @@
-jupyter-lab
+jupyterlab
 polars
 torchtyping
 transformers
