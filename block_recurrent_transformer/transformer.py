@@ -3,8 +3,10 @@ from einops import rearrange, repeat
 import torch
 import torch.nn.functional as F
 from torch import einsum, nn
+from torchtyping import TensorType
+from typing import Optional
 from x_transformers.x_transformers import (
-    Attention, CrossAttender, Decoder, exists, default, max_neg_value, l2norm, init_zero_
+    Attention, exists, default, FeedForward, max_neg_value, l2norm, init_zero_, RotaryEmbedding, AlibiPositionalBias
 )
 
 
@@ -25,18 +27,6 @@ LayerIntermediates = namedtuple('Intermediates', [
     'hiddens',
     'attn_intermediates'
 ])
-
-
-class RotaryEmbedding(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        inv_freq = 1. / (10000 ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer('inv_freq', inv_freq)
-
-    def forward(self, max_seq_len, device):
-        t = torch.arange(max_seq_len, device = device).type_as(self.inv_freq)
-        freqs = torch.einsum('i , j -> i j', t, self.inv_freq)
-        return torch.cat((freqs, freqs), dim=-1)
 
 
 def rotate_half(x):
@@ -60,12 +50,9 @@ class BlockRecurrentAttention(nn.Module):
         dim_head = DEFAULT_DIM_HEAD,
         heads = 8,
         head_scale = False,
-        dropout = 0.,
-        gate_values = False,
-        zero_init_output = False,
         qk_norm = False,
         scale_init_value = None,
-        value_dim_head = None,
+        **kwargs
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -74,36 +61,19 @@ class BlockRecurrentAttention(nn.Module):
 
         self.heads = heads
         self.causal = True
-
-        value_dim_head = default(value_dim_head, dim_head)
-        q_dim = k_dim = dim_head * heads
-        v_dim = out_dim = value_dim_head * heads
-
-        q_state_dim = k_state_dim = v_state_dim = dim_state * heads
-
-        self.to_q_state = nn.Linear(dim_state, q_state_dim, bias = False)
-        self.to_v_state = nn.Linear(dim_state, v_state_dim, bias = False)
-        self.to_k_state = nn.Linear(dim_state, k_state_dim, bias = False)
-
-        self.to_q = nn.Linear(dim, q_dim, bias = False)
-        self.to_k = nn.Linear(dim, k_dim, bias = False)
-        self.to_v = nn.Linear(dim, v_dim, bias = False)
-
+        
         self.input_self_attn = Attention(dim, heads = heads, causal = True, **attn_kwargs)
-        self.state_seff_attn = Attention(dim_state, heads = heads, causal = False, **attn_kwargs)
+        self.state_self_attn = Attention(dim_state, heads = heads, causal = False, **attn_kwargs)
 
-        self.input_cross_attn = Attention(dim, heads = heads, causal = False, **attn_kwargs)
-        self.state_cross_attn = Attention(dim_state, heads = heads, causal = False, **attn_kwargs)
+        self.input_state_cross_attn = Attention(dim, heads = heads, causal = False, **attn_kwargs)
+        self.state_input_cross_attn = Attention(dim_state, heads = heads, causal = False, **attn_kwargs)
 
+        self.input_proj = nn.Linear(dim + dim_state, dim, bias = False)
+        self.state_proj = nn.Linear(dim + dim_state, dim, bias = False)
 
-        self.dropout = nn.Dropout(dropout)
+        self.input_ff = FeedForward(dim)
+        self.state_ff = FeedForward(dim_state)
 
-        # add GLU gating for aggregated values, from alphafold2
-        self.to_v_gate = None
-        if gate_values:
-            self.to_v_gate = nn.Linear(dim, out_dim)
-            nn.init.constant_(self.to_v_gate.weight, 0)
-            nn.init.constant_(self.to_v_gate.bias, 1)
 
         # cosine sim attention
         self.qk_norm = qk_norm
@@ -116,14 +86,10 @@ class BlockRecurrentAttention(nn.Module):
         if head_scale:
             self.head_scale_params = nn.Parameter(torch.ones(1, heads, 1, 1))
 
-        # init output projection 0
-        if zero_init_output:
-            init_zero_(self.to_out)
-
     def forward(
         self,
-        x,
-        state = None,
+        x: TensorType['batch', -1, 'token_dim'],
+        state: Optional[TensorType['state_size', -1, 'state_dim']] = None,
         mask = None,
         state_mask = None,
         attn_mask = None,
@@ -132,6 +98,32 @@ class BlockRecurrentAttention(nn.Module):
         prev_attn = None,
         mem = None
     ):
+        input_attn = self.input_self_attn(x, mask = mask)
+        state_attn = self.state_self_attn(state, mask = state_mask)
+
+        # This actually is different from how it is implemented in the paper, because the Keys and Values aren't shared
+        # between the cross attention and self-attention. I'll implement that later, this is faster for now.
+        input_as_q_cross_attn = self.input_state_cross_attn(x, context = state, mask = mask, context_mask = state_mask)
+        state_as_q_cross_attn = self.state_input_cross_attn(state, context = x, mask = state_mask, context_mask = mask)
+
+        projected_input = self.input_proj(torch.concat((input_as_q_cross_attn, input_attn), dim=2))
+        projected_state = self.state_proj(torch.concat((state_as_q_cross_attn, state_attn), dim=2))
+
+        input_residual = projected_input + x
+
+        output = self.input_ff(input_residual) + input_residual
+
+        return output
+
+
+
+
+
+
+
+
+
+    """
         b, n, _, h, head_scale, scale, device, has_state = (
             *x.shape,
             self.heads,
@@ -209,13 +201,13 @@ class BlockRecurrentAttention(nn.Module):
             dots.masked_fill_(mask, mask_value)
             del mask
 
-        if self.causal:
-            i, j = dots.shape[-2:]
-            r = torch.arange(i, device = device)
-            mask = rearrange(r, 'i -> 1 1 i 1') < rearrange(r, 'j -> 1 1 1 j')
-            mask = F.pad(mask, (j - i, 0), value = False)
-            dots.masked_fill_(mask, mask_value)
-            del mask
+
+        i, j = dots.shape[-2:]
+        r = torch.arange(i, device = device)
+        mask = rearrange(r, 'i -> 1 1 i 1') < rearrange(r, 'j -> 1 1 1 j')
+        mask = F.pad(mask, (j - i, 0), value = False)
+        dots.masked_fill_(mask, mask_value)
+        del mask
 
         attn = self.attn_fn(dots, dim = -1)
         post_softmax_attn = attn.clone()
@@ -239,3 +231,4 @@ class BlockRecurrentAttention(nn.Module):
         )
 
         return self.to_out(out), intermediates
+    """

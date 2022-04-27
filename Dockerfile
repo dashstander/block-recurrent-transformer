@@ -16,7 +16,8 @@ RUN apt-get update -y && \
     pip install gpustat
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt && pip cache purge
+COPY requirements-dev.txt .
+RUN pip install -r requirements.txt && pip install -r requirements-dev.txt && pip cache purge
 
 RUN mkdir -p /home/block-recurrent-transformer
 COPY . /home/block-recurrent-transformer

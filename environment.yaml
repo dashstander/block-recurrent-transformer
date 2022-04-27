@@ -1,0 +1,21 @@
+name: brt
+channels:
+    - pytorch
+    - huggingface
+    - conda-forge
+    - defaults
+dependencies:
+    - python>=3.9
+    - pip>=22
+    - pytorch>=1.10
+    - transformers
+    - ipykernel
+    - einops
+    - pip:
+        - jupyterlab
+        - polars
+        - torchtyping
+        - typeguard
+        - x-transformers==0.27.0
+        - wandb
+    
