@@ -14,6 +14,7 @@ dependencies:
     - pip:
         - jupyterlab
         - polars
+        - pytest
         - torchtyping
         - typeguard
         - x-transformers==0.27.0
