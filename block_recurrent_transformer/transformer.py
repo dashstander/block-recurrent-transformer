@@ -68,6 +68,9 @@ class BlockRecurrentAttention(nn.Module):
         self.input_state_cross_attn = Attention(dim, heads = heads, causal = False, **attn_kwargs)
         self.state_input_cross_attn = Attention(dim_state, heads = heads, causal = False, **attn_kwargs)
 
+        self.proj_gate = nn.LSTMCell(dim, dim, bias = True)
+        self.ff_gate = nn.LSTMCell(dim, dim, bias = True)
+
         self.input_proj = nn.Linear(dim + dim_state, dim, bias = False)
         self.state_proj = nn.Linear(dim + dim_state, dim, bias = False)
 
@@ -110,8 +113,12 @@ class BlockRecurrentAttention(nn.Module):
         projected_state = self.state_proj(torch.concat((state_as_q_cross_attn, state_attn), dim=2))
 
         input_residual = projected_input + x
+        state_residual = self.proj_gate(state + projected_state)
 
         output = self.input_ff(input_residual) + input_residual
+        next_state = self.ff_gate()
+
+
 
         return output
 
