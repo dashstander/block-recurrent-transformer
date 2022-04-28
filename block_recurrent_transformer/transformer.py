@@ -119,13 +119,13 @@ class BlockRecurrentAttention(nn.Module):
         prev_attn = None,
         mem = None
     ):
-        input_attn = self.input_self_attn(x, mask = mask)
-        state_attn = self.state_self_attn(state, mask = state_mask)
+        input_attn, _ = self.input_self_attn(x, mask = mask)
+        state_attn, _ = self.state_self_attn(state, mask = state_mask)
 
         # This actually is different from how it is implemented in the paper, because the Keys and Values aren't shared
         # between the cross attention and self-attention. I'll implement that later, this is faster for now.
-        input_as_q_cross_attn = self.input_state_cross_attn(x, context = state, mask = mask, context_mask = state_mask)
-        state_as_q_cross_attn = self.state_input_cross_attn(state, context = x, mask = state_mask, context_mask = mask)
+        input_as_q_cross_attn, _ = self.input_state_cross_attn(x, context = state, mask = mask, context_mask = state_mask)
+        state_as_q_cross_attn, _ = self.state_input_cross_attn(state, context = x, mask = state_mask, context_mask = mask)
 
         projected_input = self.input_proj(torch.concat((input_as_q_cross_attn, input_attn), dim=2))
         projected_state = self.state_proj(torch.concat((state_as_q_cross_attn, state_attn), dim=2))
