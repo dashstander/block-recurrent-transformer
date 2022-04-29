@@ -12,4 +12,6 @@ def test_block_recurrent_attention():
     attn = BlockRecurrentAttention(512, 512)
     x = torch.randn((64, 512, 512))
     state = torch.randn((64, 512, 512))
-    assert attn(x, state)
+
+    out, new_state = attn(x, state)
+    assert out.shape == new_state.shape
