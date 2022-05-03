@@ -3,17 +3,15 @@ from einops import rearrange, repeat
 import torch
 from torch import einsum, nn
 import torch.nn.functional as F
-from torchtyping import patch_typeguard, TensorType
+from torchtyping import TensorType
 from typeguard import typechecked
 from typing import Optional, Tuple
 from x_transformers.x_transformers import (
     apply_rotary_pos_emb, default, exists, FeedForward, RMSNorm
 )
 
-patch_typeguard()
-
 """
-This may change significantly as I work out how to implement this properly, but until then this is largely copied from Phil Wang (@lucidrains)
+This may change significantly as I work out how to implement this properly, but until large portions of this are copied from Phil Wang (@lucidrains)
 """
 
 
@@ -220,10 +218,7 @@ class BlockRecurrentAttention(nn.Module):
         x: SeqTensor,
         state: Optional[StateTensor] = None,
         mask = None,
-        state_mask = None,
-        rel_pos = None,
-        prev_attn = None,
-        mem = None
+        state_mask = None
     ) -> Tuple[SeqTensor, StateTensor]:
         batch, seq_len, device = x.shape[0], x.shape[-2], x.device
         if exists(state):
