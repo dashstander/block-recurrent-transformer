@@ -7,7 +7,7 @@ from torchtyping import patch_typeguard, TensorType
 from typeguard import typechecked
 from typing import Optional, Tuple
 from x_transformers.x_transformers import (
-    apply_rotary_pos_emb, default, exists, FeedForward, RMSNorm, RotaryEmbedding
+    apply_rotary_pos_emb, default, exists, FeedForward, RMSNorm
 )
 
 patch_typeguard()
@@ -38,16 +38,29 @@ LayerIntermediates = namedtuple('Intermediates', [
 def cast_tuple(val, num = 1):
     return val if isinstance(val, tuple) else ((val,) * num)
 
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        inv_freq = 1. / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+
+    def forward(self, max_seq_len, *, device, offset = 0):
+        seq = torch.arange(max_seq_len, device = device) + offset
+        freqs = einsum('i , j -> i j', seq.type_as(self.inv_freq), self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim = -1)
+        return rearrange(emb, 'n d -> 1 1 n d')
+
 def rotate_half(x):
     x = rearrange(x, '... (j d) -> ... j d', j = 2)
     x1, x2 = x.unbind(dim = -2)
     return torch.cat((-x2, x1), dim = -1)
 
-
-def apply_rotary_pos_emb(t: SeqTensor, freqs):
-    seq_len = t.shape[-2]
-    freqs = freqs[-seq_len:, :]
-    return (t * freqs.cos()) + (rotate_half(t) * freqs.sin())
+def apply_rotary_pos_emb(t, freqs):
+    seq_len, rot_dim = t.shape[-2], freqs.shape[-1]
+    t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
+    t = (t * freqs.cos()) + (rotate_half(t) * freqs.sin())
+    return torch.cat((t, t_pass), dim = -1)
 
 
 @typechecked
@@ -201,6 +214,7 @@ class BlockRecurrentAttention(nn.Module):
         self.input_ff = FeedForward(dim)
         self.state_ff = FeedForward(dim_state)
 
+    @typechecked
     def forward(
         self,
         x: SeqTensor,
@@ -208,7 +222,6 @@ class BlockRecurrentAttention(nn.Module):
         mask = None,
         state_mask = None,
         rel_pos = None,
-        rotary_pos_emb = None,
         prev_attn = None,
         mem = None
     ) -> Tuple[SeqTensor, StateTensor]:
@@ -217,13 +230,13 @@ class BlockRecurrentAttention(nn.Module):
             state = torch.zeros((batch, self.state_len, self.dim_state))
         self_attn_pos_emb = self.rotary_pos_emb(seq_len, device = device)
         state_pos_emb = self.rotary_pos_emb(self.state_len, device = device)
-        input_attn, _ = self.input_self_attn(x, mask = mask, pos_emb = self_attn_pos_emb)
-        state_attn, _ = self.state_self_attn(state, mask = state_mask, pos_emb = state_pos_emb)
+        input_attn = self.input_self_attn(x, mask = mask, pos_emb = self_attn_pos_emb)
+        state_attn = self.state_self_attn(state, mask = state_mask, pos_emb = state_pos_emb)
 
         # This actually is different from how it is implemented in the paper, because the Keys and Values aren't shared
         # between the cross attention and self-attention. I'll implement that later, this is faster for now.
-        input_as_q_cross_attn, _ = self.input_state_cross_attn(x, context = state, mask = mask, context_mask = state_mask)
-        state_as_q_cross_attn, _ = self.state_input_cross_attn(state, context = x, mask = state_mask, context_mask = mask)
+        input_as_q_cross_attn = self.input_state_cross_attn(x, context = state, mask = mask)
+        state_as_q_cross_attn = self.state_input_cross_attn(state, context = x, mask = state_mask)
 
         projected_input = self.input_proj(torch.concat((input_as_q_cross_attn, input_attn), dim=2))
         projected_state = self.state_proj(torch.concat((state_as_q_cross_attn, state_attn), dim=2))
