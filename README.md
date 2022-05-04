@@ -7,4 +7,3 @@ A PyTorch implementation of [Hutchins & Schlag et al.](https://arxiv.org/abs/220
 Dockerfile, requirements.txt, _and_ environment.yaml because I love chaos.
 
 <img src="./images/masking_pattern.png" width="500px"></img>
-
