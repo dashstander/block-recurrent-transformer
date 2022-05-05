@@ -128,7 +128,6 @@ class Attention(nn.Module):
         # apply relative positional encoding (rotary embeddings)
         if exists(pos_emb):
             q_pos_emb, k_pos_emb = cast_tuple(pos_emb, num = 2)
-            print(f'q: {q.shape}\nq_pos_emb: {q_pos_emb.shape}')
             q = apply_rotary_pos_emb(q, q_pos_emb)
             k = apply_rotary_pos_emb(k, k_pos_emb)
 
@@ -228,7 +227,7 @@ class BlockRecurrentAttention(nn.Module):
         input_attn = self.input_self_attn(x, mask = mask, pos_emb = self_attn_pos_emb)
         state_attn = self.state_self_attn(state, mask = state_mask, pos_emb = state_pos_emb)
 
-        # This actually is different from how it is implemented in the paper, because the Keys and Values aren't shared
+        # TODO: This is different from how it is implemented in the paper, because the Keys and Values aren't shared
         # between the cross attention and self-attention. I'll implement that later, this is faster for now.
         input_as_q_cross_attn = self.input_state_cross_attn(x, context = state, mask = mask)
         state_as_q_cross_attn = self.state_input_cross_attn(state, context = x, mask = state_mask)
