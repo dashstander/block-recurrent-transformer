@@ -1,4 +1,4 @@
-jupyterlab
+omegaconf
 polars
 torchtyping
 transformers

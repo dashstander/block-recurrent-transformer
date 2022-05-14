@@ -220,8 +220,8 @@ class BlockRecurrentAttention(nn.Module):
         state_mask = None
     ) -> Tuple[SeqTensor, StateTensor]:
         batch, seq_len, device = x.shape[0], x.shape[-2], x.device
-        if exists(state):
-            state = torch.zeros((batch, self.state_len, self.dim_state))
+        if not exists(state):
+            state = torch.zeros((batch, self.state_len, self.dim_state), device=device)
         self_attn_pos_emb = self.rotary_pos_emb(seq_len, device = device)
         state_pos_emb = self.rotary_pos_emb(self.state_len, device = device)
         input_attn = self.input_self_attn(x, mask = mask, pos_emb = self_attn_pos_emb)

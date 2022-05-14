@@ -10,10 +10,12 @@ dependencies:
     - pytorch>=1.10
     - transformers
     - ipykernel
+    - ipywidgets
     - einops
     - datasets
     - pip:
         - jupyterlab
+        - omegaconf
         - polars
         - pytest
         - torchtyping
